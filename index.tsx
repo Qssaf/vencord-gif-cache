@@ -1,112 +1,147 @@
 /*
  * Vencord, a Discord client mod
- * Copyright (c) 2026 Vendicated and contributors
+ * Copyright (c) 2026 Qssaf
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
 import { Logger } from "@utils/Logger";
-import definePlugin from "@utils/types";
-import { IconUtils } from "@webpack/common";
+import definePlugin, { StartAt } from "@utils/types";
 
+import { capture, isEnabled, isOnDisk, load, Native, pooledUrl, startCache, whenReady } from "./cache";
 import { settings } from "./settings";
-import { cacheManager } from "./storage/cacheManager";
-import { fetchAndCache, isCachableMediaUrl } from "./utils/fetcher";
+import { cacheKey } from "./urls";
+
+// Media is intercepted where every image and video gets its source: the src setter and setAttribute("src")
+// of <img> and <video>. That covers all of Discord's components without patching any of them.
+
+type MediaElement = HTMLImageElement | HTMLVideoElement;
+type SetSrc = (el: MediaElement, src: string) => void;
 
 const logger = new Logger("GifCache");
 
-const originalIconMethods = new Map<string, any>();
+/** The URL Discord asked for, per element, while we decide what to actually load. */
+const wanted = new WeakMap<Element, string>();
+const unhooks: (() => void)[] = [];
 
-function wrapIconMethod(target: any, methodName: string) {
-    if (!target || typeof target[methodName] !== "function") return;
+/** Returns true if we took over setting the element's source. */
+function intercept(el: MediaElement, url: string, setSrc: SetSrc): boolean {
+    const key = cacheKey(url);
+    if (!key || !isEnabled(key)) {
+        wanted.delete(el);
+        return false;
+    }
+    wanted.set(el, url);
 
-    const original = target[methodName];
-    originalIconMethods.set(methodName, original);
+    const pooled = pooledUrl(key, el);
+    if (pooled) {
+        setSrc(el, pooled);
+        return true;
+    }
 
-    target[methodName] = function (this: any, ...args: any[]) {
-        const url = original.apply(this, args);
-        if (!url || typeof url !== "string" || !isCachableMediaUrl(url)) {
-            return url;
-        }
+    if (el instanceof HTMLVideoElement) {
+        // loop may be set after src, so decide once React has applied every prop
+        queueMicrotask(() => resolveVideo(el, url, key, setSrc));
+        return true;
+    }
 
-        const inMemory = cacheManager.getInMemoryBlobUrl(url);
-        if (inMemory) {
-            return inMemory;
-        }
+    if (isOnDisk(key) === false) {
+        captureOnLoad(el, url, key);
+        return false;
+    }
 
-        void fetchAndCache(url);
-        return url;
-    };
+    void resolveImage(el, url, key, setSrc);
+    return true;
 }
 
-function unwrapIconMethods(target: any) {
-    if (!target) return;
-    for (const [methodName, original] of originalIconMethods.entries()) {
-        try {
-            target[methodName] = original;
-        } catch {
-            // Ignore if sealed
-        }
+async function resolveImage(el: HTMLImageElement, url: string, key: string, setSrc: SetSrc) {
+    await whenReady();
+    const pooled = isOnDisk(key) && await load(url, key, false) && pooledUrl(key, el);
+    if (wanted.get(el) !== url) return;
+
+    setSrc(el, pooled || url);
+    if (!pooled) captureOnLoad(el, url, key);
+}
+
+async function resolveVideo(el: HTMLVideoElement, url: string, key: string, setSrc: SetSrc) {
+    if (wanted.get(el) !== url) return;
+
+    // Only GIF-style videos. Regular videos would be downloaded in full just for being on screen.
+    if (!el.loop) {
+        wanted.delete(el);
+        setSrc(el, url);
+        return;
     }
-    originalIconMethods.clear();
+
+    // Many GIF videos have no CORS headers, so the main process downloads them once instead of the browser.
+    await whenReady();
+    const pooled = await load(url, key, true) && pooledUrl(key, el);
+    if (wanted.get(el) === url) setSrc(el, pooled || url);
+}
+
+function captureOnLoad(el: HTMLImageElement, url: string, key: string) {
+    el.addEventListener("load", () => {
+        // currentSrc differs when srcset picked another URL; that one is not in the HTTP cache under url
+        if (wanted.get(el) === url && el.currentSrc === new URL(url).href) capture(url, key);
+    }, { once: true });
+}
+
+function hookSrc(proto: HTMLImageElement | HTMLVideoElement) {
+    const ownSrc = Object.getOwnPropertyDescriptor(proto, "src");
+    const src = ownSrc ?? Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, "src")!;
+    const setSrc: SetSrc = (el, value) => src.set!.call(el, value);
+
+    Object.defineProperty(proto, "src", {
+        configurable: true,
+        enumerable: src.enumerable,
+        get() {
+            // Discord code reading src back gets the URL it set, not our blob: URL
+            return wanted.get(this) ?? src.get!.call(this);
+        },
+        set(value) {
+            if (!intercept(this, String(value), setSrc)) src.set!.call(this, value);
+        },
+    });
+
+    proto.setAttribute = function (this: MediaElement, name: string, value: string) {
+        if (name === "src" && intercept(this, String(value), setSrc)) return;
+        Element.prototype.setAttribute.call(this, name, value);
+    };
+    proto.removeAttribute = function (this: MediaElement, name: string) {
+        if (name === "src") wanted.delete(this);
+        Element.prototype.removeAttribute.call(this, name);
+    };
+
+    unhooks.push(() => {
+        if (ownSrc) Object.defineProperty(proto, "src", ownSrc);
+        else delete (proto as any).src;
+        delete (proto as any).setAttribute;
+        delete (proto as any).removeAttribute;
+    });
 }
 
 export default definePlugin({
     name: "GifCache",
-    description: "Persistently caches GIFs, emojis, stickers, avatars, and videos locally to save bandwidth on slow internet",
-    authors: [{ name: "Sisyphus", id: 0n }],
+    description: "Saves GIFs, emojis, stickers, avatars and images to disk so they never download twice",
+    authors: [{ name: "Qssaf", id: 0n }],
     tags: ["Media", "Utility"],
     settings,
-
-    patches: [
-        {
-            find: ".handleImageLoad)",
-            replacement: {
-                match: /getSrc\(\i\)\{/,
-                replace: "$&var _vcCached=$self.getCachedSrc(this?.props,arguments[1]);if(_vcCached)return _vcCached;",
-            },
-        },
-    ],
-
-    // Expose for testing & QA scenarios
-    cacheManager,
-    fetchAndCache,
+    startAt: StartAt.Init,
 
     start() {
-        // Wrap IconUtils to catch inline emojis, reactions, avatars, and server icons
-        if (IconUtils) {
-            wrapIconMethod(IconUtils, "getEmojiURL");
-            wrapIconMethod(IconUtils, "getUserAvatarURL");
-            wrapIconMethod(IconUtils, "getGuildIconURL");
-            wrapIconMethod(IconUtils, "getGuildBannerURL");
-            wrapIconMethod(IconUtils, "getUserBannerURL");
+        if (!Native) {
+            logger.error("Native module missing. Fully restart Discord to finish installing.");
+            return;
         }
 
-        logger.info("Universal media cache active (GIFs, emojis, stickers, avatars, attachments)");
+        startCache();
+        hookSrc(HTMLImageElement.prototype);
+        hookSrc(HTMLVideoElement.prototype);
+
+        // storage used by the previous version of this plugin
+        void caches.delete("vencord-gif-cache-v1");
     },
 
     stop() {
-        if (IconUtils) {
-            unwrapIconMethods(IconUtils);
-        }
-        cacheManager.destroy();
-        logger.info("GifCache stopped");
-    },
-
-    getCachedSrc(props: { src?: string; original?: string; url?: string }, _freeze?: boolean): string | undefined {
-        const targetUrl = props?.src || props?.original || props?.url;
-        if (!targetUrl || typeof targetUrl !== "string") return;
-
-        if (!isCachableMediaUrl(targetUrl)) return;
-
-        // Synchronously return in-memory blob URL if available
-        const inMemoryBlob = cacheManager.getInMemoryBlobUrl(targetUrl);
-        if (inMemoryBlob) {
-            return inMemoryBlob;
-        }
-
-        // Kick off background fetch / hydration
-        void fetchAndCache(targetUrl);
-
-        return;
+        for (const unhook of unhooks.splice(0)) unhook();
     },
 });

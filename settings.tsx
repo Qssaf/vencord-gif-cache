@@ -1,6 +1,6 @@
 /*
  * Vencord, a Discord client mod
- * Copyright (c) 2026 Vendicated and contributors
+ * Copyright (c) 2026 Qssaf
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
@@ -11,100 +11,81 @@ import { Paragraph } from "@components/Paragraph";
 import { OptionType } from "@utils/types";
 import { useEffect, useState } from "@webpack/common";
 
-import { cacheManager } from "./storage/cacheManager";
+import { clearCache, Native, setLimit } from "./cache";
 
 function CacheControls() {
-    const [stats, setStats] = useState({ count: 0, totalBytes: 0 });
-    const [clearing, setClearing] = useState(false);
+    const [stats, setStats] = useState<{ count: number; bytes: number; } | null>(null);
+    const [busy, setBusy] = useState(false);
 
-    const updateStats = async () => {
-        const currentStats = await cacheManager.getStats();
-        setStats(currentStats);
-    };
+    const refresh = () => Native?.stats().then(setStats);
+    useEffect(() => void refresh(), []);
 
-    useEffect(() => {
-        updateStats();
-    }, []);
+    if (!Native) return <Paragraph>Fully restart Discord (quit from the tray) to finish installing GifCache.</Paragraph>;
 
-    const handleClear = async () => {
-        setClearing(true);
+    const clear = async () => {
+        setBusy(true);
         try {
-            await cacheManager.clearCache();
-            await updateStats();
+            await clearCache();
+            await refresh();
         } finally {
-            setClearing(false);
+            setBusy(false);
         }
     };
-
-    const mb = (stats.totalBytes / (1024 * 1024)).toFixed(2);
 
     return (
         <Flex flexDirection="column" gap="8px">
             <Paragraph>
-                Cached media items: <strong>{stats.count}</strong> ({mb} MB)
+                {stats ? <>Cached: <strong>{stats.count}</strong> files, <strong>{(stats.bytes / 1024 / 1024).toFixed(1)} MB</strong></> : "Loading…"}
             </Paragraph>
             <Flex gap="8px">
-                <Button
-                    variant="dangerSecondary"
-                    size="small"
-                    disabled={clearing || stats.count === 0}
-                    onClick={handleClear}
-                >
-                    {clearing ? "Clearing..." : "Clear Cache"}
-                </Button>
-                <Button
-                    variant="secondary"
-                    size="small"
-                    onClick={updateStats}
-                >
-                    Refresh Stats
+                <Button variant="secondary" size="small" onClick={refresh}>Refresh</Button>
+                <Button variant="secondary" size="small" onClick={() => Native?.openFolder()}>Open Folder</Button>
+                <Button variant="dangerSecondary" size="small" disabled={busy || !stats?.count} onClick={clear}>
+                    {busy ? "Clearing…" : "Clear Cache"}
                 </Button>
             </Flex>
         </Flex>
     );
 }
 
+// Keys match the categories in urls.ts
 export const settings = definePluginSettings({
-    cacheGifs: {
+    gifs: {
         type: OptionType.BOOLEAN,
-        description: "Cache animated GIFs and Tenor embeds",
+        description: "Cache GIFs: Tenor, Giphy and Klipy GIFs, GIF attachments and looping GIF videos",
         default: true,
     },
-    cacheEmojis: {
+    emojis: {
         type: OptionType.BOOLEAN,
-        description: "Cache custom server and reaction emojis",
+        description: "Cache custom emojis",
         default: true,
     },
-    cacheStickers: {
+    stickers: {
         type: OptionType.BOOLEAN,
-        description: "Cache custom stickers (PNG, APNG, Lottie)",
+        description: "Cache stickers (PNG, APNG and GIF; Lottie stickers are not cached)",
         default: true,
     },
-    cacheAvatars: {
+    profiles: {
         type: OptionType.BOOLEAN,
-        description: "Cache user avatars, banners, and server icons",
+        description: "Cache avatars, server icons, banners and avatar decorations",
         default: true,
     },
-    cacheVideos: {
+    images: {
         type: OptionType.BOOLEAN,
-        description: "Cache MP4 and WebM video embeds",
+        description: "Cache image attachments and embed images. Regular videos and files are never cached",
         default: true,
     },
-    cacheAttachments: {
-        type: OptionType.BOOLEAN,
-        description: "Cache image attachments sent in chat",
-        default: true,
-    },
-    maxCacheSizeMB: {
+    maxSizeMB: {
         type: OptionType.SLIDER,
-        description: "Target maximum cache size (in MB)",
-        markers: [500, 1000, 3000, 10000],
-        default: 3000,
+        description: "Maximum cache size on disk (MB). Least recently used files are removed first",
+        markers: [250, 500, 1000, 2000, 5000, 10000],
+        default: 2000,
         stickToMarkers: true,
+        onChange: (value: number) => void setLimit(value),
     },
-    cacheControls: {
+    controls: {
         type: OptionType.COMPONENT,
-        description: "Manage local cached files",
+        description: "",
         component: CacheControls,
     },
 });
