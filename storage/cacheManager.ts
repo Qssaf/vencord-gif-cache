@@ -73,7 +73,7 @@ export class CacheManager {
     public async cacheMedia(url: string, response: Response): Promise<string | null> {
         try {
             const blob = await response.blob();
-            if (blob.size === 0) return null;
+            if (blob.size === 0 || blob.size > 25 * 1024 * 1024) return null;
 
             const cache = await this.getCache();
             const cacheResponse = new Response(blob, {

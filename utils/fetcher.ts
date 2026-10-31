@@ -12,6 +12,8 @@ import { cacheManager } from "../storage/cacheManager";
 const logger = new Logger("GifCache:Fetcher");
 const pendingFetches = new Map<string, Promise<string | null>>();
 
+const MAX_ITEM_SIZE_BYTES = 25 * 1024 * 1024; // 25 MB max per item
+
 const ALLOWED_CONTENT_TYPES = [
     "image/gif",
     "image/webp",
@@ -138,6 +140,14 @@ export async function fetchAndCache(url: string): Promise<string | null> {
             const contentType = response.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase();
             if (contentType && !ALLOWED_CONTENT_TYPES.includes(contentType)) {
                 return null;
+            }
+
+            const contentLengthHeader = response.headers.get("content-length");
+            if (contentLengthHeader) {
+                const length = parseInt(contentLengthHeader, 10);
+                if (length > MAX_ITEM_SIZE_BYTES) {
+                    return null;
+                }
             }
 
             const blobUrl = await cacheManager.cacheMedia(url, response);
