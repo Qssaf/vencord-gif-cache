@@ -117,7 +117,7 @@ async function evict(): Promise<string[]> {
 async function put(key: string, data: Uint8Array, type: string): Promise<string[]> {
     await load();
     const f = createHash("sha256").update(key).digest("hex").slice(0, 40) + "." + MIME_EXT[type];
-    const tmp = join(DIR, f + ".tmp");
+    const tmp = join(DIR, `${f}.${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}.tmp`);
     await writeFile(tmp, data);
     await rename(tmp, join(DIR, f));
 

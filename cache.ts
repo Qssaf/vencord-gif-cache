@@ -34,7 +34,7 @@ let poolBytes = 0;
 const inflight = new Map<string, Promise<boolean>>();
 const captureQueue = new Map<string, string>();
 const uncapturable = new Set<string>();
-let activeCaptures = 0;
+const capturing = new Set<string>();
 
 export function isEnabled(key: string) {
     return settings.store[categorize(key)];
@@ -135,18 +135,18 @@ export function load(url: string, key: string, allowDownload: boolean) {
  * out of Chromium's HTTP cache, so this does not download anything again.
  */
 export function capture(url: string, key: string) {
-    if (diskKeys.has(key) || uncapturable.has(key) || captureQueue.has(key)) return;
+    if (diskKeys.has(key) || uncapturable.has(key) || captureQueue.has(key) || capturing.has(key)) return;
     captureQueue.set(key, url);
     pumpCaptures();
 }
 
 function pumpCaptures() {
     for (const [key, url] of captureQueue) {
-        if (activeCaptures >= MAX_PARALLEL_CAPTURES) return;
+        if (capturing.size >= MAX_PARALLEL_CAPTURES) return;
         captureQueue.delete(key);
-        activeCaptures++;
+        capturing.add(key);
         captureOne(url, key).finally(() => {
-            activeCaptures--;
+            capturing.delete(key);
             pumpCaptures();
         });
     }
