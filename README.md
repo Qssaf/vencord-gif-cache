@@ -1,26 +1,36 @@
-# Vencord GIF Cache (`GifCache`)
+# Vencord Media & GIF Cache (`GifCache`)
 
-A custom [Vencord](https://vencord.dev) and [Vesktop](https://github.com/Vencord/Vesktop) userplugin that persistently caches loaded GIFs, animated WebP images, and Tenor MP4 videos to local storage. 
+A custom [Vencord](https://vencord.dev) and [Vesktop](https://github.com/Vencord/Vesktop) userplugin that persistently caches GIFs, custom emojis, stickers, avatars, server banners, and Tenor/MP4 videos directly to local disk.
 
-Once media is loaded on your client, it is stored locally and served instantly on repeat views without re-downloading over the internet—ideal for slow, metered, or unstable connections.
+Once any media is loaded on your client, it is saved locally to Chromium's `CacheStorage` and served instantly from memory blob URLs on subsequent views—saving massive amounts of bandwidth on slow, metered, or unstable connections.
+
+---
+
+## What Gets Cached?
+
+- **GIFs & Tenor Embeds**: Tenor MP4 videos, Giphy animations, WebP animations.
+- **Custom Emojis**: Server emojis and reaction emojis from `cdn.discordapp.com/emojis/`.
+- **Stickers**: Custom PNG, APNG, and Lottie stickers.
+- **Avatars & Banners**: User avatars, profile banners, server icons, and guild banners.
+- **Chat Attachments**: Images and media uploaded directly to channels.
 
 ---
 
 ## Features
 
-- **Persistent Disk Caching**: Stores media files in Chromium's persistent `CacheStorage` API (`vencord-gif-cache-v1`), surviving client restarts and computer reboots.
-- **Cross-Account Sharing**: Cached by media URL rather than Discord user ID. Any GIF loaded on one Discord account loads instantly on your other accounts on the same client.
+- **Persistent Disk Caching**: Stores files in Chromium's persistent `CacheStorage` API (`vencord-gif-cache-v1`), surviving client restarts and PC reboots.
+- **Cross-Account Sharing**: Cached by media URL rather than Discord user ID. Any emoji, avatar, or GIF loaded on one account loads instantly on your other accounts on the same client.
 - **Zero-Latency In-Memory Blob Pooling**: Serves local `blob:` URLs directly to Discord's image and video renderers without touching the network.
-- **Renderer RAM Safety**: Includes reference-counted blob pooling with LRU eviction and automatic `URL.revokeObjectURL` cleanup to ensure Discord does not leak memory.
-- **In-App Management**: Built-in Vencord settings panel to configure cache size limits, toggle video caching, view live storage statistics, and clear the cache anytime.
+- **Renderer RAM Safety**: Includes reference-counted blob pooling with LRU eviction and automatic `URL.revokeObjectURL` cleanup to ensure Discord never leaks memory.
+- **Granular Settings**: Toggle caching individually for GIFs, Emojis, Stickers, Avatars, Videos, and Attachments, adjust max disk cache size, view live storage statistics, and clear the cache anytime.
 
 ---
 
 ## Installation
 
-### Method 1: In a Local Vencord Build
+### In a Local Vencord Build
 
-Clone this repository directly into your Vencord `src/userplugins` folder:
+Clone this repository into your Vencord `src/userplugins` folder:
 
 ```bash
 cd Vencord/src/userplugins
@@ -43,9 +53,9 @@ In Discord / Vesktop:
 1. Open **User Settings** -> **Plugins**.
 2. Search for **GifCache** and ensure it is enabled.
 3. Open the plugin settings gear to:
-   - Adjust maximum cache size (default: 2000 MB).
-   - Toggle whether to cache MP4 videos in addition to GIF/WebP formats.
-   - View current cached item counts and disk usage.
+   - Toggle individual media categories (GIFs, Emojis, Stickers, Avatars, Videos, Attachments).
+   - Adjust maximum cache size (default: 3000 MB).
+   - View live cached item count and disk usage in megabytes.
    - Clear local cached files at any time.
 
 ---

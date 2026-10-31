@@ -65,16 +65,41 @@ function CacheControls() {
 }
 
 export const settings = definePluginSettings({
+    cacheGifs: {
+        type: OptionType.BOOLEAN,
+        description: "Cache animated GIFs and Tenor embeds",
+        default: true,
+    },
+    cacheEmojis: {
+        type: OptionType.BOOLEAN,
+        description: "Cache custom server and reaction emojis",
+        default: true,
+    },
+    cacheStickers: {
+        type: OptionType.BOOLEAN,
+        description: "Cache custom stickers (PNG, APNG, Lottie)",
+        default: true,
+    },
+    cacheAvatars: {
+        type: OptionType.BOOLEAN,
+        description: "Cache user avatars, banners, and server icons",
+        default: true,
+    },
     cacheVideos: {
         type: OptionType.BOOLEAN,
-        description: "Cache Tenor MP4 videos in addition to GIFs and WebP images",
+        description: "Cache MP4 and WebM video embeds",
+        default: true,
+    },
+    cacheAttachments: {
+        type: OptionType.BOOLEAN,
+        description: "Cache image attachments sent in chat",
         default: true,
     },
     maxCacheSizeMB: {
         type: OptionType.SLIDER,
         description: "Target maximum cache size (in MB)",
-        markers: [500, 1000, 2000, 5000],
-        default: 2000,
+        markers: [500, 1000, 3000, 10000],
+        default: 3000,
         stickToMarkers: true,
     },
     cacheControls: {

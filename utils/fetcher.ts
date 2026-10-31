@@ -6,6 +6,7 @@
 
 import { Logger } from "@utils/Logger";
 
+import { settings } from "../settings";
 import { cacheManager } from "../storage/cacheManager";
 
 const logger = new Logger("GifCache:Fetcher");
@@ -14,41 +15,94 @@ const pendingFetches = new Map<string, Promise<string | null>>();
 const ALLOWED_CONTENT_TYPES = [
     "image/gif",
     "image/webp",
+    "image/png",
+    "image/jpeg",
     "image/apng",
     "video/mp4",
     "video/webm",
+    "application/json",
 ];
 
-export function isCachableMediaUrl(url: string): boolean {
-    if (!url || url.startsWith("data:") || url.startsWith("blob:")) return false;
+export type MediaCategory = "gif" | "video" | "emoji" | "sticker" | "avatar" | "attachment" | "other";
+
+export function categorizeUrl(url: string): MediaCategory | null {
+    if (!url || url.startsWith("data:") || url.startsWith("blob:")) return null;
 
     try {
         const parsed = new URL(url);
         const path = parsed.pathname.toLowerCase();
+        const host = parsed.hostname.toLowerCase();
 
-        if (
-            path.endsWith(".gif") ||
-            path.endsWith(".webp") ||
-            path.endsWith(".mp4") ||
-            path.endsWith(".webm")
-        ) {
-            return true;
+        // Videos
+        if (path.endsWith(".mp4") || path.endsWith(".webm") || path.endsWith(".mov")) {
+            return "video";
         }
 
-        // Tenor / Giphy CDNs
+        // Discord CDN Assets
         if (
-            parsed.hostname.includes("tenor.com") ||
-            parsed.hostname.includes("giphy.com") ||
-            parsed.hostname.includes("media.discordapp.net") ||
-            parsed.hostname.includes("cdn.discordapp.com")
+            host.includes("discordapp.net") ||
+            host.includes("discordapp.com") ||
+            host.includes("discord.com")
         ) {
-            return true;
+            if (path.includes("/emojis/")) return "emoji";
+            if (path.includes("/stickers/")) return "sticker";
+            if (
+                path.includes("/avatars/") ||
+                path.includes("/user-avatars/") ||
+                path.includes("/guild-events/") ||
+                path.includes("/icons/") ||
+                path.includes("/banners/") ||
+                path.includes("/splashes/")
+            ) {
+                return "avatar";
+            }
+            if (path.includes("/attachments/")) {
+                if (path.endsWith(".gif") || path.endsWith(".webp")) return "gif";
+                if (path.endsWith(".mp4") || path.endsWith(".webm") || path.endsWith(".mov")) return "video";
+                return "attachment";
+            }
+        }
+
+        // Tenor / Giphy
+        if (host.includes("tenor.com") || host.includes("giphy.com")) {
+            if (path.endsWith(".mp4") || path.endsWith(".webm")) return "video";
+            return "gif";
+        }
+
+        // Generic files
+        if (path.endsWith(".gif")) return "gif";
+        if (path.endsWith(".webp") || path.endsWith(".png") || path.endsWith(".jpg") || path.endsWith(".jpeg")) {
+            return "other";
         }
     } catch {
-        return false;
+        return null;
     }
 
-    return false;
+    return null;
+}
+
+export function isCachableMediaUrl(url: string): boolean {
+    const category = categorizeUrl(url);
+    if (!category) return false;
+
+    switch (category) {
+        case "gif":
+            return settings.store.cacheGifs;
+        case "video":
+            return settings.store.cacheVideos;
+        case "emoji":
+            return settings.store.cacheEmojis;
+        case "sticker":
+            return settings.store.cacheStickers;
+        case "avatar":
+            return settings.store.cacheAvatars;
+        case "attachment":
+            return settings.store.cacheAttachments;
+        case "other":
+            return settings.store.cacheAttachments;
+        default:
+            return false;
+    }
 }
 
 export async function fetchAndCache(url: string): Promise<string | null> {
@@ -83,12 +137,8 @@ export async function fetchAndCache(url: string): Promise<string | null> {
 
             const contentType = response.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase();
             if (contentType && !ALLOWED_CONTENT_TYPES.includes(contentType)) {
-                // Not an animated GIF or video
                 return null;
             }
-
-            const contentLengthHeader = response.headers.get("content-length");
-            const expectedLength = contentLengthHeader ? parseInt(contentLengthHeader, 10) : null;
 
             const blobUrl = await cacheManager.cacheMedia(url, response);
             return blobUrl;
